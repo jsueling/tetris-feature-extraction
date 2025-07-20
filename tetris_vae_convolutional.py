@@ -12,7 +12,10 @@ from tqdm import tqdm
 import tetris_dataset
 import tetris_vae_utils as utils
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else \
+    ("mps" if torch.backends.mps.is_available() else "cpu")
+)
 BATCH_SIZE = 128
 LATENT_DIM = 2
 MAX_KLD_WEIGHT = 1.0
@@ -20,8 +23,8 @@ GRID_SIZE = 200
 GRID_HEIGHT = 20
 GRID_WIDTH = 10
 NUM_EPOCHS = 200
-WARMUP_EPOCHS = 1 # Epochs to wait before early stopping may occur
-PATIENCE = 0 # Epochs to wait before early stopping after no improvement
+WARMUP_EPOCHS = 50 # Epochs to wait before early stopping may occur
+PATIENCE = 20 # Epochs to wait before early stopping after no improvement
 
 class TetrisConvolutionalVAE(nn.Module):
     """
@@ -111,8 +114,6 @@ class TetrisConvolutionalVAE(nn.Module):
 
         # Weight initialisation for training stability/convergence
         self.apply(kaiming_init)
-        self.fc_mean.apply(xavier_init)
-        self.fc_logvar.apply(xavier_init)
 
     def encode(self, x):
         """Encodes the input into mean and variance vectors of the latent space vector z."""
@@ -179,20 +180,11 @@ def kaiming_init(m):
     to improve convergence during training.
     """
     if isinstance(m, (nn.Linear, nn.Conv2d)):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+        nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu', a=0.01)
         if m.bias is not None:
             m.bias.data.fill_(0)
     elif isinstance(m, nn.BatchNorm2d):
         m.weight.data.fill_(1)
-        if m.bias is not None:
-            m.bias.data.fill_(0)
-
-def xavier_init(m):
-    """
-    Xavier initialisation for the mean and log variance linear layers.
-    """
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)
         if m.bias is not None:
             m.bias.data.fill_(0)
 
@@ -234,10 +226,11 @@ def vae_loss(
     return elbo_loss, pixel_bce, kl_div_loss
 
 def train_model(
+        train_loader,
+        validation_loader,
+        filename_prefix,
         latent_dim=LATENT_DIM,
         max_kld_weight=MAX_KLD_WEIGHT,
-        train_loader=None,
-        validation_loader=None
     ):
     """
     Trains the Tetris VAE model on the Tetris dataset.
@@ -331,7 +324,7 @@ def train_model(
         history['avg_kl_div_loss'].append(avg_kl_div_loss)
 
         # Save history every epoch
-        np.save(f"./out/conv_dim_{latent_dim}_max_kld_{max_kld_weight}.npy", history)
+        np.save(f"{filename_prefix}_history.npy", history)
 
         # Skip early stopping and learning rate scheduling during warmup
         if epoch <= WARMUP_EPOCHS:
@@ -344,7 +337,7 @@ def train_model(
         if avg_validation_loss < best_validation_loss:
             best_validation_loss = avg_validation_loss
             epochs_no_improvement = 0
-            utils.save_model(model, f"./out/conv_dim_{latent_dim}_max_kld_{max_kld_weight}.pth")
+            utils.save_model(model, f"{filename_prefix}_model.pth")
         else:
             epochs_no_improvement += 1
             if epochs_no_improvement >= PATIENCE:
@@ -375,21 +368,33 @@ if __name__ == "__main__":
         batch_size=BATCH_SIZE
     )
 
-    for latent_dim in range(2, 17):
-        for max_kld_weight in [0.2, 0.4, 1.0, 2.0, 4.0]:
-            train_model(
-                latent_dim=latent_dim,
-                max_kld_weight=max_kld_weight,
-                train_loader=train_loader,
-                validation_loader=validation_loader
-            )
+    # Train the model with an informed range of latent dimensions and max_kld weights
+    # for latent_dim in range(2, 17):
+    #     for max_kld_weight in [0.2, 0.4, 1.0, 2.0, 4.0]:
+    #         train_model(
+    #             train_loader=train_loader,
+    #             validation_loader=validation_loader
+    #             latent_dim=latent_dim,
+    #             max_kld_weight=max_kld_weight,
+    #             filename_prefix=f"./out/conv_dim_{latent_dim}_max_kld_{max_kld_weight}"
+    #         )
 
     latent_dim = 8
     kld_weight = 1.25
-    history_file_path = f"../out/dim_{latent_dim}_max_kld_{kld_weight}.npy"
-    model_file_path = f"../out/dim_{latent_dim}_max_kld_{kld_weight}.pth"
+    directory = './out/'
+    out_filename_prefix = directory + f"conv_dim_{latent_dim}_max_kld_{kld_weight}"
+    history_file_path = f"{out_filename_prefix}_history.npy"
+    model_file_path = f"{out_filename_prefix}_model.pth"
 
-    utils.plot_history(history_file_path)
+    train_model(
+        train_loader=train_loader,
+        validation_loader=validation_loader,
+        filename_prefix=out_filename_prefix,
+        latent_dim=latent_dim,
+        max_kld_weight=kld_weight,
+    )
+
+    utils.plot_history(history_file_path, out_filename_prefix)
 
     vae_model = TetrisConvolutionalVAE(latent_dim=latent_dim).to(DEVICE)
     vae_model = utils.load_model(vae_model, model_file_path)
@@ -400,6 +405,6 @@ if __name__ == "__main__":
     utils.latent_space_traversal(
         vae_model,
         data,
-        latent_dim=latent_dim,
-        max_kld_weight=kld_weight
+        filename_prefix=out_filename_prefix,
+        latent_dim=latent_dim
     )
