@@ -109,6 +109,11 @@ class TetrisConvolutionalVAE(nn.Module):
 
         self.decoder = nn.Sequential(*decoder_layers)
 
+        # Weight initialisation for training stability/convergence
+        self.apply(kaiming_init)
+        self.fc_mean.apply(xavier_init)
+        self.fc_logvar.apply(xavier_init)
+
     def encode(self, x):
         """Encodes the input into mean and variance vectors of the latent space vector z."""
         x = self.encoder(x)
@@ -166,6 +171,30 @@ class TetrisConvolutionalVAE(nn.Module):
         grid_recon_logits = self.decode(z)
 
         return grid_recon_logits, z_mean, z_logvar
+
+def kaiming_init(m):
+    """
+    Kaiming initialisation for the model layers which are followed by LeakyReLU activations.
+    This is used to initialise the weights of the convolutional and linear layers
+    to improve convergence during training.
+    """
+    if isinstance(m, (nn.Linear, nn.Conv2d)):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+    elif isinstance(m, nn.BatchNorm2d):
+        m.weight.data.fill_(1)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+
+def xavier_init(m):
+    """
+    Xavier initialisation for the mean and log variance linear layers.
+    """
+    if isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
 
 def vae_loss(
         grid_true, grid_recon_logits,
@@ -366,6 +395,11 @@ if __name__ == "__main__":
     vae_model = utils.load_model(vae_model, model_file_path)
     data = tetris_dataset.TetrisDataset(device=DEVICE)
 
-    # utils.reconstruction_test(vae_model, data)
-    # utils.map_latent_space_to_grid(vae_model, data, latent_dim=latent_dim)
-    # utils.latent_space_traversal(vae_model, data, latent_dim=latent_dim)
+    utils.reconstruction_test(vae_model, data)
+    utils.map_latent_space_to_grid(vae_model, data, latent_dim=latent_dim)
+    utils.latent_space_traversal(
+        vae_model,
+        data,
+        latent_dim=latent_dim,
+        max_kld_weight=kld_weight
+    )
