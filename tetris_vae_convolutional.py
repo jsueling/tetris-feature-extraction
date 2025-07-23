@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, random_split
 import numpy as np
 from tqdm import tqdm
 
-import tetris_dataset
+from tetris_dataset import TetrisDataset, TetrisNStepDataSet
 import tetris_vae_utils as utils
 
 DEVICE = torch.device(
@@ -352,7 +352,7 @@ if __name__ == "__main__":
     random.seed(RANDOM_SEED)
 
     # Load and split dataset
-    full_dataset = tetris_dataset.TetrisDataset(device=DEVICE)
+    full_dataset = TetrisDataset(device=DEVICE)
 
     # 80 / 20 split
     train_set, validation_set = random_split(full_dataset, [0.8, 0.2])
@@ -386,25 +386,34 @@ if __name__ == "__main__":
     history_file_path = f"{out_filename_prefix}_history.npy"
     model_file_path = f"{out_filename_prefix}_model.pth"
 
-    train_model(
-        train_loader=train_loader,
-        validation_loader=validation_loader,
-        filename_prefix=out_filename_prefix,
-        latent_dim=latent_dim,
-        max_kld_weight=kld_weight,
-    )
+    # train_model(
+    #     train_loader=train_loader,
+    #     validation_loader=validation_loader,
+    #     filename_prefix=out_filename_prefix,
+    #     latent_dim=latent_dim,
+    #     max_kld_weight=kld_weight,
+    # )
 
-    utils.plot_history(history_file_path, out_filename_prefix)
+    # utils.plot_history(history_file_path, out_filename_prefix)
 
-    vae_model = TetrisConvolutionalVAE(latent_dim=latent_dim).to(DEVICE)
-    vae_model = utils.load_model(vae_model, model_file_path)
-    data = tetris_dataset.TetrisDataset(device=DEVICE)
+    # vae_model = TetrisConvolutionalVAE(latent_dim=latent_dim).to(DEVICE)
+    # vae_model = utils.load_model(vae_model, model_file_path)
+    # data = TetrisDataset(device=DEVICE)
 
-    utils.reconstruction_test(vae_model, data)
-    utils.map_latent_space_to_grid(vae_model, data, latent_dim=latent_dim)
-    utils.latent_space_traversal(
-        vae_model,
-        data,
-        filename_prefix=out_filename_prefix,
-        latent_dim=latent_dim
-    )
+    # utils.reconstruction_test(vae_model, data)
+    # utils.map_latent_space_to_grid(vae_model, data, latent_dim=latent_dim)
+    # utils.latent_space_traversal(
+    #     vae_model,
+    #     data,
+    #     filename_prefix=out_filename_prefix,
+    #     latent_dim=latent_dim
+    # )
+
+    n_step_dataset = TetrisNStepDataSet(device=DEVICE)
+
+    for grid, n_step_reward_samples in n_step_dataset:
+        print(grid)
+        print(grid.shape)
+        for sample in n_step_reward_samples:
+            print(sample)
+        break
