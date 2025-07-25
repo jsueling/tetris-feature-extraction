@@ -42,7 +42,7 @@ class TetrisDataset(Dataset):
         """Load and return a single game state."""
         return torch.Tensor(self.samples[idx]).to(self.device)
 
-class TetrisNStepDataSet(Dataset):
+class NStepDataSet(Dataset):
     """Custom dataset for loading Tetris game states with n-step reward samples."""
 
     def __init__(self, data_dir="./data", device=None):

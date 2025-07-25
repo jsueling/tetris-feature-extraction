@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, random_split
 import numpy as np
 from tqdm import tqdm
 
-from tetris_dataset import TetrisDataset, TetrisNStepDataSet
+from tetris_dataset import TetrisDataset
 import tetris_vae_utils as utils
 
 DEVICE = torch.device(
@@ -34,11 +34,11 @@ class TetrisConvolutionalVAE(nn.Module):
     """
 
     def __init__(
-            self,
-            grid_height=20,
-            grid_width=10,
-            latent_dim=LATENT_DIM,
-        ):
+        self,
+        grid_height=20,
+        grid_width=10,
+        latent_dim=LATENT_DIM,
+    ):
 
         super(TetrisConvolutionalVAE, self).__init__()
         self.grid_height = grid_height
@@ -408,12 +408,3 @@ if __name__ == "__main__":
     #     filename_prefix=out_filename_prefix,
     #     latent_dim=latent_dim
     # )
-
-    n_step_dataset = TetrisNStepDataSet(device=DEVICE)
-
-    for grid, n_step_reward_samples in n_step_dataset:
-        print(grid)
-        print(grid.shape)
-        for sample in n_step_reward_samples:
-            print(sample)
-        break
