@@ -1,5 +1,6 @@
 test.py
 data/
 out/
+n_step/
 __pycache__/
 .DS_Store

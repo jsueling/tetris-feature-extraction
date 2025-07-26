@@ -56,17 +56,10 @@ class NStepDataSet(Dataset):
         os.makedirs(data_dir, exist_ok=True)
         self.device = device
 
-        glob_pattern = os.path.join(data_dir, "*n_step_samples*.npy")
-        file_paths = glob.glob(glob_pattern)
-
-        if not file_paths:
-            raise ValueError(f"No n-step sample files found in {data_dir}")
-
         self.samples = []
-        for file_path in file_paths:
-            data = np.load(file_path, allow_pickle=True)
-            for sample in data:
-                self.samples.append(sample)
+        data = np.load(os.path.join(data_dir, "50k_tetris_n_step_samples_125_steps.npy"), allow_pickle=True)
+        for sample in data:
+            self.samples.append(sample)
 
     def __len__(self):
         return len(self.samples)
