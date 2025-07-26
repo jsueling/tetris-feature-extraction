@@ -8,14 +8,10 @@ import random
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 from tqdm import tqdm
 
-from tetris_dataset import NStepDataSet
-
-DEVICE = torch.device(
-    "cuda" if torch.cuda.is_available() else \
-    ("mps" if torch.backends.mps.is_available() else "cpu")
-)
+from tetris_dataset import NStepRewardDataSet
 
 RANDOM_SEED = 0
 GAMMAS_TO_TEST = [0.90, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 0.999]
@@ -81,7 +77,6 @@ def plot_return_variance_vs_gamma(all_reward_samples, gammas):
             # The variance of discounted returns across seeds for this gamma + state
             variances_per_gamma[gamma].append(np.var(discounted_returns, ddof=1))
 
-
     # Average variance of discounted returns across all game states for each gamma
     avg_variance_per_gamma = [
         np.mean(variances_per_gamma[gamma]) for gamma in GAMMAS_TO_TEST
@@ -117,20 +112,22 @@ def plot_discounted_return_distribution(all_reward_samples, gamma):
 
     all_discounted_returns = []
     for reward_samples in tqdm(all_reward_samples):
+        # reward_samples shape: (num_seeds, num_steps_in_trajectory)
         for single_seed_trajectory in reward_samples:
             discounted_return = calculate_discounted_return(single_seed_trajectory, gamma)
             all_discounted_returns.append(discounted_return)
 
     plt.figure(figsize=(10, 6))
     plt.hist(all_discounted_returns, bins=50, alpha=0.7, color='blue')
-    plt.title(f"Distribution of discounted returns "
-              f"(samples={len(all_reward_samples)}, Gamma={gamma})")
+    plt.title(f"Distribution of discounted returns of all trajectories \n"
+              f"(num_trajectories_per_sample={len(reward_samples)}, "
+              f"samples={short_num(len(all_reward_samples))}, Gamma={gamma})")
     plt.xlabel('Discounted return')
     plt.ylabel('Frequency')
     plt.grid(True)
+    plt.gca().yaxis.set_major_formatter(FuncFormatter(lambda x, _: short_num(int(x))))
     plt.savefig(os.path.join(DIRECTORY, f'{short_num(len(all_reward_samples))}_'
     f'discounted_return_distribution_gamma_{gamma}.png'))
-    plt.legend()
     plt.show()
 
 def aggregate_n_step_rewards(all_samples, gamma):
@@ -140,12 +137,14 @@ def aggregate_n_step_rewards(all_samples, gamma):
         grid + approximate discounted return.
     """
 
+    # all_samples shape (num_samples, num_seeds, num_steps_in_trajectory)
+
     aggregated_n_step_returns = []
-    for grid, n_step_reward_samples in all_samples:
+    for grid, n_step_reward_samples in tqdm(all_samples):
         condensed_sample = {
             'grid': grid,
             'approx_discounted_return': discounted_return_approx(
-                n_step_reward_samples.cpu().numpy(),
+                n_step_reward_samples,
                 gamma=gamma
             )
         }
@@ -155,7 +154,7 @@ def aggregate_n_step_rewards(all_samples, gamma):
         os.path.join(
             DIRECTORY,
             f"{short_num(len(all_samples))}_tetris_approx_discounted_"
-            f"return_{all_samples[0][1].shape[1]}_steps_gamma_{gamma}.npy"
+            f"return_{len(all_samples[0][0])}_steps_gamma_{gamma}.npy"
         ),
         aggregated_n_step_returns
     )
@@ -181,7 +180,7 @@ if __name__ == "__main__":
 
     os.makedirs(DIRECTORY, exist_ok=True)
 
-    n_step_dataset = NStepDataSet(device=DEVICE)
+    n_step_dataset = NStepRewardDataSet()
     print(f"Loaded {len(n_step_dataset)} samples.")
 
     all_reward_samples = []
@@ -190,7 +189,6 @@ if __name__ == "__main__":
     for _, reward_samples in tqdm(n_step_dataset, desc="Processing samples"):
 
         # reward_samples shape: (num_seeds, num_steps_in_trajectory)
-        reward_samples = reward_samples.cpu().numpy()
         all_reward_samples.append(reward_samples)
 
     plot_cumulative_reward_variance(all_reward_samples)
