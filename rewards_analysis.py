@@ -137,7 +137,7 @@ def aggregate_n_step_rewards(all_samples, gamma):
         grid + approximate discounted return.
     """
 
-    # all_samples shape (num_samples, num_seeds, num_steps_in_trajectory)
+    # all_samples shape (num_samples, 2, num_seeds, num_steps_in_trajectory)
 
     aggregated_n_step_returns = []
     for grid, n_step_reward_samples in tqdm(all_samples):
@@ -154,7 +154,7 @@ def aggregate_n_step_rewards(all_samples, gamma):
         os.path.join(
             DIRECTORY,
             f"{short_num(len(all_samples))}_tetris_approx_discounted_"
-            f"return_{len(all_samples[0][0])}_steps_gamma_{gamma}.npy"
+            f"return_{len(all_samples[0][1][0])}_steps_gamma_{gamma}.npy"
         ),
         aggregated_n_step_returns
     )

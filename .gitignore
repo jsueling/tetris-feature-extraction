@@ -2,5 +2,6 @@ test.py
 data/
 out/
 n_step/
+discounted_return_vae_out/
 __pycache__/
 .DS_Store

@@ -52,7 +52,7 @@ class NStepRewardDataSet(Dataset):
         self.samples = np.load(
             os.path.join(
                 data_dir,
-                "50k_tetris_n_step_samples_125_steps.99.npy"
+                "50k_tetris_n_step_samples_125_steps.npy"
             ),
             allow_pickle=True
         )
@@ -74,20 +74,34 @@ class DiscountedReturnDataSet(Dataset):
         os.makedirs(data_dir, exist_ok=True)
         self.device = device
 
-        self.samples = torch.tensor(
-            np.load(
-                os.path.join(
-                    data_dir,
-                    "50k_tetris_approx_discounted_return_125_steps_gamma_0.99.npy"
-                ),
-                allow_pickle=True
+        data = np.load(
+            os.path.join(
+                data_dir,
+                "50k_tetris_approx_discounted_return_125_steps_gamma_0.99.npy"
             ),
+            allow_pickle=True
+        )
+
+        self.grids = []
+        self.discounted_returns = []
+
+        for sample in data:
+            self.grids.append(sample['grid'].reshape(1, 20, 10))
+            self.discounted_returns.append(sample['approx_discounted_return'])
+
+        self.grids = torch.tensor(
+            np.array(self.grids),
+            dtype=torch.float32
+        ).to(self.device)
+
+        self.discounted_returns = torch.tensor(
+            np.array(self.discounted_returns),
             dtype=torch.float32
         ).to(self.device)
 
     def __len__(self):
-        return len(self.samples)
+        return self.grids.shape[0]
 
     def __getitem__(self, idx):
-        """Load and return a single game state."""
-        return self.samples[idx]['grid'], self.samples[idx]['approx_discounted_return']
+        """Load and return the grid and approximate discounted return of a game state."""
+        return self.grids[idx], self.discounted_returns[idx]
