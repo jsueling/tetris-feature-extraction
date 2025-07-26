@@ -50,9 +50,10 @@ def plot_cumulative_reward_variance(reward_samples):
 
     plt.figure(figsize=(10, 6))
     plt.plot(avg_variance_over_time)
-    plt.title('Average variance of cumulative rewards over time')
+    plt.title(f'Average variance of undiscounted cumulative rewards'
+              f' over time (samples={short_num(len(reward_samples))})')
     plt.xlabel('Time step')
-    plt.ylabel('Variance of cumulative reward')
+    plt.ylabel('Average variance of undiscounted cumulative reward')
     plt.grid(True)
     plt.savefig(os.path.join(DIRECTORY, f'{short_num(len(reward_samples))}_'
     f'reward_variance_over_time.png'))
@@ -60,13 +61,15 @@ def plot_cumulative_reward_variance(reward_samples):
 
 def plot_return_variance_vs_gamma(all_reward_samples, gammas):
     """
-    Plots the average variance of discounted returns against the discount factor.
-    This helps in choosing a gamma that doesn't introduce too much variance.
+    For all gammas, calculates the within-seed variance of discounted returns,
+    and then average that variance across all game states. This function then
+    plots the average variance of discounted returns across all game states
+    for each gamma.
     """
 
     variances_per_gamma = {gamma: [] for gamma in GAMMAS_TO_TEST}
 
-    for reward_samples in all_reward_samples:
+    for reward_samples in tqdm(all_reward_samples):
         for gamma in GAMMAS_TO_TEST:
 
             # shape: (num_seeds,)
@@ -78,6 +81,7 @@ def plot_return_variance_vs_gamma(all_reward_samples, gammas):
             # The variance of discounted returns across seeds for this gamma + state
             variances_per_gamma[gamma].append(np.var(discounted_returns, ddof=1))
 
+
     # Average variance of discounted returns across all game states for each gamma
     avg_variance_per_gamma = [
         np.mean(variances_per_gamma[gamma]) for gamma in GAMMAS_TO_TEST
@@ -85,7 +89,8 @@ def plot_return_variance_vs_gamma(all_reward_samples, gammas):
 
     plt.figure(figsize=(10, 6))
     plt.plot(gammas, avg_variance_per_gamma, marker='o')
-    plt.title('Average variance of discounted returns across different discount factors')
+    plt.title(f'Average variance of discounted returns across different discount factors'
+              f' (samples={short_num(len(all_reward_samples))})')
     plt.xlabel('Discount factor (Gamma)')
     plt.ylabel('Average variance of discounted returns')
     plt.grid(True)
@@ -111,7 +116,7 @@ def plot_discounted_return_distribution(all_reward_samples, gamma):
     """
 
     all_discounted_returns = []
-    for reward_samples in all_reward_samples:
+    for reward_samples in tqdm(all_reward_samples):
         for single_seed_trajectory in reward_samples:
             discounted_return = calculate_discounted_return(single_seed_trajectory, gamma)
             all_discounted_returns.append(discounted_return)
@@ -119,7 +124,7 @@ def plot_discounted_return_distribution(all_reward_samples, gamma):
     plt.figure(figsize=(10, 6))
     plt.hist(all_discounted_returns, bins=50, alpha=0.7, color='blue')
     plt.title(f"Distribution of discounted returns "
-              f"(samples={len(all_reward_samples)}, gamma={gamma})")
+              f"(samples={len(all_reward_samples)}, Gamma={gamma})")
     plt.xlabel('Discounted return')
     plt.ylabel('Frequency')
     plt.grid(True)
@@ -191,10 +196,10 @@ if __name__ == "__main__":
     plot_cumulative_reward_variance(all_reward_samples)
     plot_return_variance_vs_gamma(all_reward_samples, GAMMAS_TO_TEST)
 
-    #=======================================================#
-    #   Map collected samples to single discounted returns  #
-    #   given gamma informed by visualisations              #
-    #=======================================================#
+    #====================================================================#
+    #   Map collected samples' n-step reward trajectories to single      #
+    #   discounted return value given gamma informed by visualisations   #
+    #====================================================================#
 
     GAMMA = 0.99
     plot_discounted_return_distribution(all_reward_samples, gamma=GAMMA)
