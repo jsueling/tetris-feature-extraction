@@ -11,7 +11,7 @@ import numpy as np
 from tqdm import tqdm
 
 from tetris_dataset import DiscountedReturnDataSet
-import tetris_vae_utils as utils
+import tetris_vae_utils_discounted_return as utils
 
 DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else \
@@ -456,7 +456,7 @@ if __name__ == "__main__":
 
     for dr_weight in [2]:
 
-        FILENAME_PREFIX = os.path.join(OUT_DIR, f"1c_512b__tdr_drw_{dr_weight}")
+        FILENAME_PREFIX = os.path.join(OUT_DIR, f"1c_512b_100epoch_tdr_drw_{dr_weight}")
 
         train_model(
             train_data_loader=train_loader,
