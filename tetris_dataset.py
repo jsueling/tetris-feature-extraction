@@ -67,41 +67,39 @@ class NStepRewardDataSet(Dataset):
 class DiscountedReturnDataSet(Dataset):
     """Custom dataset for loading Tetris game states with discounted returns."""
 
-    def __init__(self, data_dir="./data", device=None):
+    def __init__(self, data, d_return_mean=None, d_return_std=None):
+        """
+        Normalises the approximate discounted return if mean and std are provided
+        from a prior dataset
+        """
 
-        assert device is not None, "Initialise with the device used in the model"
-
-        os.makedirs(data_dir, exist_ok=True)
-        self.device = device
-
-        data = np.load(
-            os.path.join(
-                data_dir,
-                "50k_tetris_approx_discounted_return_125_steps_gamma_0.99.npy"
-            ),
-            allow_pickle=True
-        )
-
-        self.grids = []
-        self.discounted_returns = []
-
-        for sample in data:
-            self.grids.append(sample['grid'].reshape(1, 20, 10))
-            self.discounted_returns.append(sample['approx_discounted_return'])
-
-        self.grids = torch.tensor(
-            np.array(self.grids),
-            dtype=torch.float32
-        ).to(self.device)
-
-        self.discounted_returns = torch.tensor(
-            np.array(self.discounted_returns),
-            dtype=torch.float32
-        ).to(self.device)
+        self.data = data
+        self.d_return_mean = d_return_mean
+        self.d_return_std = d_return_std
+        self.normalise = d_return_mean is not None and d_return_std is not None
+        if self.d_return_std is not None:
+            assert d_return_std > 1e-6, \
+                f"Standard deviation too small for normalisation ({d_return_std})"
 
     def __len__(self):
-        return self.grids.shape[0]
+        return len(self.data)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> tuple[torch.Tensor, torch.Tensor]:
         """Load and return the grid and approximate discounted return of a game state."""
-        return self.grids[idx], self.discounted_returns[idx]
+        sample = self.data[idx]
+
+        grid = sample['grid'].reshape(1, 20, 10)
+        grid_tensor = torch.tensor(grid, dtype=torch.float32)
+
+        approx_discounted_return = sample['approx_discounted_return']
+
+        if self.normalise:
+            approx_discounted_return = \
+                (approx_discounted_return - self.d_return_mean) / self.d_return_std
+
+        approx_discounted_return_tensor = torch.tensor(
+            approx_discounted_return,
+            dtype=torch.float32
+        )
+
+        return grid_tensor, approx_discounted_return_tensor

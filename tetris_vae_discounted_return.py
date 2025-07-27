@@ -6,7 +6,7 @@ import random
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 import numpy as np
 from tqdm import tqdm
 
@@ -17,7 +17,7 @@ DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else \
     ("mps" if torch.backends.mps.is_available() else "cpu")
 )
-BATCH_SIZE = 128
+BATCH_SIZE = 512
 LATENT_DIM = 8
 MAX_KLD_WEIGHT = 1.25
 DR_LOSS_WEIGHT = 1.0
@@ -25,8 +25,7 @@ GRID_SIZE = 200
 GRID_HEIGHT = 20
 GRID_WIDTH = 10
 NUM_EPOCHS = 200
-WARMUP_EPOCHS = 50 # Epochs to wait before early stopping may occur
-PATIENCE = 20 # Epochs to wait before early stopping after no improvement
+WARMUP_EPOCHS = int(NUM_EPOCHS * 0.5)
 
 class TetrisDiscountedReturnVAE(nn.Module):
     """
@@ -121,7 +120,13 @@ class TetrisDiscountedReturnVAE(nn.Module):
         self.decoder = nn.Sequential(*decoder_layers)
 
         # Weight initialisation for training stability/convergence
-        self.apply(kaiming_init)
+        self.encoder.apply(kaiming_init)
+        self.decoder[:-1].apply(kaiming_init)
+        self.reward_predictor[:-1].apply(kaiming_init)
+        nn.init.zeros_(self.fc_logvar.weight)
+        nn.init.zeros_(self.fc_logvar.bias)
+        nn.init.zeros_(self.reward_predictor[-1].weight)
+        nn.init.zeros_(self.reward_predictor[-1].bias)
 
     def encode(self, x: Tensor) -> tuple[Tensor, Tensor]:
         """Encodes the input into mean and variance vectors of the latent space vector z."""
@@ -207,7 +212,7 @@ def vae_loss(
     epoch,
     max_kld_weight,
     discounted_return_loss_weight,
-):
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     """Computes the loss for the VAE model. Returns losses per sample of this batch"""
 
     # Grid reconstruction loss (binary cross-entropy)
@@ -257,7 +262,9 @@ def train_model(
     filename_prefix,
     latent_dim=LATENT_DIM,
     max_kld_weight=MAX_KLD_WEIGHT,
-    discounted_return_loss_weight=DR_LOSS_WEIGHT
+    discounted_return_loss_weight=DR_LOSS_WEIGHT,
+    train_set_discounted_return_mean=None,
+    train_set_discounted_return_std=None
 ):
     """
     Trains the Tetris VAE model on the Tetris dataset.
@@ -266,19 +273,16 @@ def train_model(
     # Initialise model and optimiser
     model = TetrisDiscountedReturnVAE(latent_dim=latent_dim).to(DEVICE)
 
-    # AdamW optimiser with learning rate scheduling
-    # to reduce the learning rate when validation loss plateaus
-    # and L2 regularisation to prevent overfitting
     optimiser = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimiser,
-        patience=3,
-        factor=0.5
+        max_lr=1e-3,
+        steps_per_epoch=len(train_data_loader),
+        epochs=NUM_EPOCHS
     )
 
-    epochs_no_improvement = 0
     history = defaultdict(list)
-    best_validation_loss = float('inf')
     validation_samples = len(val_data_loader.dataset)
     training_samples = len(train_data_loader.dataset)
 
@@ -290,10 +294,15 @@ def train_model(
         unit="epoch"
     ):
 
-        # Training phase
+        # Training
+
         train_loss = 0
 
         for grid_true, discounted_return_approx in train_data_loader:
+
+            # Move data to the device
+            grid_true = grid_true.to(DEVICE)
+            discounted_return_approx = discounted_return_approx.to(DEVICE)
 
             optimiser.zero_grad()
 
@@ -312,42 +321,50 @@ def train_model(
             )
 
             loss.backward()
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimiser.step()
+            scheduler.step()
             train_loss += loss.item() * batch_size
 
-        # Validation phase
+        # Validation
+
         validation_loss = 0
         validation_correct_pixels = 0
         validation_pixel_bce = 0
         validation_kl_div_loss = 0
         validation_dr_loss = 0
 
-        with torch.no_grad():
-            for grid_true, discounted_return_approx in val_data_loader:
+        for grid_true, discounted_return_approx in val_data_loader:
 
-                batch_size = grid_true.size(0)
+            # Move data to the device
+            grid_true = grid_true.to(DEVICE)
+            discounted_return_approx = discounted_return_approx.to(DEVICE)
 
+            batch_size = grid_true.size(0)
+
+            with torch.no_grad():
                 grid_recon_logits, z_mean, z_logvar, d_return_mu, d_return_log_var \
                     = model(grid_true, training=False)
 
-                loss, pixel_bce, kl_div_loss, discounted_return_nll_loss = vae_loss(
-                    grid_true, grid_recon_logits,
-                    z_mean, z_logvar,
-                    discounted_return_approx, d_return_mu, d_return_log_var,
-                    epoch=epoch,
-                    max_kld_weight=max_kld_weight,
-                    discounted_return_loss_weight=discounted_return_loss_weight
-                )
+            loss, pixel_bce, kl_div_loss, discounted_return_nll_loss = vae_loss(
+                grid_true, grid_recon_logits,
+                z_mean, z_logvar,
+                discounted_return_approx, d_return_mu, d_return_log_var,
+                epoch=epoch,
+                max_kld_weight=max_kld_weight,
+                discounted_return_loss_weight=discounted_return_loss_weight
+            )
 
-                validation_pixel_bce += pixel_bce.item() * batch_size
-                validation_kl_div_loss += kl_div_loss.item() * batch_size
-                validation_dr_loss += discounted_return_nll_loss.item() * batch_size
+            validation_pixel_bce += pixel_bce.item() * batch_size
+            validation_kl_div_loss += kl_div_loss.item() * batch_size
+            validation_dr_loss += discounted_return_nll_loss.item() * batch_size
 
-                validation_loss += loss.item() * batch_size
+            validation_loss += loss.item() * batch_size
 
-                pixel_predictions = (torch.sigmoid(grid_recon_logits) > 0.5).float()
-                # Count correct pixel predictions
-                validation_correct_pixels += (pixel_predictions == grid_true).float().sum().item()
+            pixel_predictions = (torch.sigmoid(grid_recon_logits) > 0.5).float()
+            # Count correct pixel predictions
+            validation_correct_pixels += (pixel_predictions == grid_true).float().sum().item()
 
         # Per sample metrics calculated from the validation set
         avg_train_loss = train_loss / training_samples
@@ -365,41 +382,66 @@ def train_model(
         history['avg_kl_div_loss'].append(avg_kl_div_loss)
         history['avg_dr_loss'].append(avg_dr_loss)
 
-        # Save history every epoch
+        # Save model and history every epoch
+
         np.save(f"{filename_prefix}_history.npy", history)
 
-        # Skip early stopping and learning rate scheduling during warmup
-        if epoch <= WARMUP_EPOCHS:
-            continue
-
-        # Learning rate scheduling
-        scheduler.step(avg_validation_loss)
-
-        # Early stopping check
-        if avg_validation_loss < best_validation_loss:
-            best_validation_loss = avg_validation_loss
-            epochs_no_improvement = 0
-            utils.save_model(model, f"{filename_prefix}_model.pth")
-        else:
-            epochs_no_improvement += 1
-            if epochs_no_improvement >= PATIENCE:
-                break
+        utils.save_model_dr(
+            model,
+            train_set_discounted_return_mean,
+            train_set_discounted_return_std,
+            f"{filename_prefix}_model.pth"
+        )
 
 if __name__ == "__main__":
 
     RANDOM_SEED = 0
-    DIRECTORY = './discounted_return_vae_out/'
-    FILENAME_PREFIX = os.path.join(DIRECTORY, "tetris_discounted_return_vae")
+    OUT_DIR = './discounted_return_vae_out/'
     torch.manual_seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
     random.seed(RANDOM_SEED)
-    os.makedirs(DIRECTORY, exist_ok=True)
+    os.makedirs(OUT_DIR, exist_ok=True)
 
-    # Load and split dataset
-    full_dataset = DiscountedReturnDataSet(device=DEVICE)
+    raw_data = np.load(
+        "./data/50k_tetris_approx_discounted_return_125_steps_gamma_0.99.npy",
+        allow_pickle=True
+    )
 
-    # 80 / 20 split
-    train_set, validation_set = random_split(full_dataset, [0.8, 0.2])
+    # 70 / 20 / 10 split
+    dataset_size = len(raw_data)
+    indices = list(range(dataset_size))
+    np.random.shuffle(indices)
+    train_split = int(0.7 * dataset_size)
+    val_split = int(0.9 * dataset_size)
+    train_indices = indices[:train_split]
+    val_indices = indices[train_split:val_split]
+    test_indices = indices[val_split:]
+
+    # Calculate mean and std of the training set for normalisation. Only the training set
+    # is used to calculate the mean and std to prevent data leakage.
+
+    train_returns = np.array([raw_data[i]['approx_discounted_return'] for i in train_indices])
+
+    train_d_return_mean = train_returns.mean()
+    train_d_return_std = train_returns.std()
+
+    train_set = DiscountedReturnDataSet(
+        data=[raw_data[i] for i in train_indices],
+        d_return_mean=train_d_return_mean,
+        d_return_std=train_d_return_std
+    )
+
+    validation_set = DiscountedReturnDataSet(
+        data=[raw_data[i] for i in val_indices],
+        d_return_mean=train_d_return_mean,
+        d_return_std=train_d_return_std
+    )
+
+    test_set = DiscountedReturnDataSet(
+        data=[raw_data[i] for i in test_indices],
+        d_return_mean=train_d_return_mean,
+        d_return_std=train_d_return_std
+    )
 
     train_loader = DataLoader(
         train_set,
@@ -412,13 +454,29 @@ if __name__ == "__main__":
         batch_size=BATCH_SIZE
     )
 
-    train_model(
-        train_data_loader=train_loader,
-        val_data_loader=validation_loader,
-        filename_prefix=FILENAME_PREFIX,
-        latent_dim=LATENT_DIM,
-        max_kld_weight=MAX_KLD_WEIGHT,
-        discounted_return_loss_weight=DR_LOSS_WEIGHT
-    )
+    for dr_weight in [2]:
 
-    utils.plot_dr_history(FILENAME_PREFIX)
+        FILENAME_PREFIX = os.path.join(OUT_DIR, f"1c_512b__tdr_drw_{dr_weight}")
+
+        train_model(
+            train_data_loader=train_loader,
+            val_data_loader=validation_loader,
+            filename_prefix=FILENAME_PREFIX,
+            latent_dim=LATENT_DIM,
+            max_kld_weight=MAX_KLD_WEIGHT,
+            discounted_return_loss_weight=dr_weight,
+            train_set_discounted_return_mean=train_d_return_mean,
+            train_set_discounted_return_std=train_d_return_std
+        )
+
+        utils.plot_dr_history(FILENAME_PREFIX)
+
+        utils.mean_vs_true_discounted_return(
+            filepath_prefix=FILENAME_PREFIX,
+            dataset=test_set
+        )
+
+        utils.pred_error_vs_pred_sigma(
+            filepath_prefix=FILENAME_PREFIX,
+            dataset=test_set
+        )

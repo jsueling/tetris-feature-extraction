@@ -253,6 +253,22 @@ def load_model(model, path):
     model.load_state_dict(torch.load(path, map_location=DEVICE))
     return model
 
+def save_model_dr(model, discounted_return_mean, discounted_return_std, path):
+    """Saves the model state dictionary and normalisation stats to the specified path."""
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'discounted_return_mean': discounted_return_mean,
+        'discounted_return_std': discounted_return_std
+    }, path)
+
+def load_model_dr(model, path):
+    """Loads the model state dictionary and normalisation stats from the specified path."""
+    saved_state = torch.load(path, map_location=DEVICE, weights_only=False)
+    model.load_state_dict(saved_state['model_state_dict'])
+    discounted_return_mean = saved_state['discounted_return_mean']
+    discounted_return_std = saved_state['discounted_return_std']
+    return model, discounted_return_mean, discounted_return_std
+
 ###############################################
 # Discounted Return Prediction Visualisations #
 ###############################################
@@ -322,7 +338,8 @@ def mean_vs_true_discounted_return(filepath_prefix, dataset, device=DEVICE):
     """
 
     model = TetrisDiscountedReturnVAE(latent_dim=LATENT_DIM).to(device)
-    model = load_model(model, f"{filepath_prefix}_model.pth")
+    model, train_d_return_mean, train_d_return_std = \
+        load_model_dr(model, f"{filepath_prefix}_model.pth")
 
     data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
     all_preds = []
@@ -330,15 +347,21 @@ def mean_vs_true_discounted_return(filepath_prefix, dataset, device=DEVICE):
 
     model.eval()
     with torch.no_grad():
-        for grids, discounted_returns in data_loader:
+        for grids, true_norm_return in data_loader:
 
             grids = grids.to(device)
-            discounted_returns = discounted_returns.to(device)
+            true_norm_return = true_norm_return.to(device)
 
-            _, _, _, rewards_mu, _ = model(grids, training=False)
+            _, _, _, predicted_norm_return_mu, _ = model(grids, training=False)
 
-            all_preds.append(rewards_mu.squeeze().cpu())
-            all_targets.append(discounted_returns.cpu())
+            # Unnormalise the predicted rewards (scale + shift)
+            predicted_return_mean = predicted_norm_return_mu.squeeze().cpu() * \
+                train_d_return_std + train_d_return_mean
+            true_return = (true_norm_return.cpu() * train_d_return_std) + \
+                train_d_return_mean
+
+            all_preds.append(predicted_return_mean)
+            all_targets.append(true_return)
 
     all_preds = torch.cat(all_preds, dim=0)
     all_targets = torch.cat(all_targets, dim=0)
@@ -362,7 +385,8 @@ def pred_error_vs_pred_sigma(filepath_prefix, dataset, device=DEVICE):
     """
 
     model = TetrisDiscountedReturnVAE(latent_dim=LATENT_DIM).to(device)
-    model = load_model(model, f"{filepath_prefix}_model.pth")
+    model, train_d_return_mean, train_d_return_std = \
+        load_model_dr(model, f"{filepath_prefix}_model.pth")
 
     data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
     abs_pred_errors = []
@@ -370,15 +394,24 @@ def pred_error_vs_pred_sigma(filepath_prefix, dataset, device=DEVICE):
 
     model.eval()
     with torch.no_grad():
-        for grids, discounted_return_true in data_loader:
+        for grids, true_norm_return in data_loader:
 
             grids = grids.to(device)
-            discounted_return_true = discounted_return_true.to(device)
+            true_norm_return = true_norm_return.to(device)
 
-            _, _, _, discounted_return_mu, discounted_return_log_var = model(grids, training=False)
+            _, _, _, predicted_norm_return_mu, predicted_norm_return_log_var = \
+                model(grids, training=False)
 
-            abs_pred_errors.append((discounted_return_true - discounted_return_mu).abs().cpu())
-            pred_standard_deviations.append(np.exp(0.5 * discounted_return_log_var).squeeze().cpu())
+            # Unnormalise predicted and true returns (scale + shift)
+            predicted_return_mean = predicted_norm_return_mu.cpu() * \
+                train_d_return_std + train_d_return_mean
+            true_return = true_norm_return.cpu() * train_d_return_std + train_d_return_mean
+            # Unnormalise predicted standard deviation (scale only)
+            predicted_return_std = torch.exp(0.5 * predicted_norm_return_log_var.cpu()) * \
+                train_d_return_std
+
+            abs_pred_errors.append((true_return - predicted_return_mean).abs().cpu())
+            pred_standard_deviations.append(predicted_return_std.squeeze())
 
     abs_pred_errors = torch.cat(abs_pred_errors, dim=0)
     pred_standard_deviations = torch.cat(pred_standard_deviations, dim=0)
