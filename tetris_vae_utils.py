@@ -330,7 +330,8 @@ def plot_dr_history(filepath_prefix):
 
     plt.tight_layout()
     plt.savefig(f'{filepath_prefix}_history.png')
-    plt.show()
+    # plt.show()
+    plt.close()
 
 def mean_vs_true_discounted_return(filepath_prefix, dataset, device=DEVICE):
     """
@@ -377,7 +378,8 @@ def mean_vs_true_discounted_return(filepath_prefix, dataset, device=DEVICE):
               f'(R²={r_squared:.2f}, samples={short_num(len(all_targets))})')
     plt.grid(True)
     plt.savefig(f'{filepath_prefix}_predicted_vs_true_discounted_returns.png')
-    plt.show()
+    # plt.show()
+    plt.close()
 
 def pred_error_vs_pred_sigma(filepath_prefix, dataset, device=DEVICE):
     """
@@ -427,4 +429,5 @@ def pred_error_vs_pred_sigma(filepath_prefix, dataset, device=DEVICE):
               f'samples={short_num(len(abs_pred_errors))})')
     plt.grid(True)
     plt.savefig(f'{filepath_prefix}_error_vs_predicted_sigma.png')
-    plt.show()
+    # plt.show()
+    plt.close()

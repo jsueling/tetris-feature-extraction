@@ -24,8 +24,8 @@ DR_LOSS_WEIGHT = 1.0
 GRID_SIZE = 200
 GRID_HEIGHT = 20
 GRID_WIDTH = 10
-NUM_EPOCHS = 200
-WARMUP_EPOCHS = int(NUM_EPOCHS * 0.5)
+NUM_EPOCHS = 400
+WARMUP_EPOCHS = int(NUM_EPOCHS * 0.3)
 
 class TetrisDiscountedReturnVAE(nn.Module):
     """
@@ -193,10 +193,10 @@ class TetrisDiscountedReturnVAE(nn.Module):
 def kaiming_init(m):
     """
     Kaiming initialisation for the model layers which are followed by LeakyReLU activations.
-    This is used to initialise the weights of the convolutional and linear layers
+    This is used to initialise the weights of the deconvolutional/convolutional and linear layers
     to improve convergence during training.
     """
-    if isinstance(m, (nn.Linear, nn.Conv2d)):
+    if isinstance(m, (nn.Linear, nn.Conv2d, nn.ConvTranspose2d)):
         nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu', a=0.01)
         if m.bias is not None:
             m.bias.data.fill_(0)
