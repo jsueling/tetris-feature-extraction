@@ -394,7 +394,7 @@ if __name__ == "__main__":
     #     max_kld_weight=kld_weight,
     # )
 
-    # utils.plot_history(history_file_path, out_filename_prefix)
+    # utils.plot_history(out_filename_prefix)
 
     # vae_model = TetrisConvolutionalVAE(latent_dim=latent_dim).to(DEVICE)
     # vae_model = utils.load_model(vae_model, model_file_path)
