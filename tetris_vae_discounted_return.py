@@ -24,7 +24,7 @@ DR_LOSS_WEIGHT = 1.0
 GRID_SIZE = 200
 GRID_HEIGHT = 20
 GRID_WIDTH = 10
-NUM_EPOCHS = 400
+NUM_EPOCHS = 200
 WARMUP_EPOCHS = int(NUM_EPOCHS * 0.3)
 
 class TetrisDiscountedReturnVAE(nn.Module):
@@ -208,7 +208,7 @@ def kaiming_init(m):
 def vae_loss(
     grid_true, grid_recon_logits,
     z_mean, z_logvar,
-    discounted_return_true, discounted_return_mu, discounted_return_log_var,
+    discounted_return_true, discounted_return_predicted_mu, discounted_return_predicted_log_var,
     epoch,
     max_kld_weight,
     discounted_return_loss_weight,
@@ -242,10 +242,10 @@ def vae_loss(
 
     discounted_return_nll_loss = 0.5 * (
         # Uncertainty penalty
-        discounted_return_log_var +
+        discounted_return_predicted_log_var +
         # Accuracy penalty
-        ((discounted_return_true - discounted_return_mu) ** 2) \
-            / torch.exp(discounted_return_log_var)
+        ((discounted_return_true - discounted_return_predicted_mu) ** 2) \
+            / torch.exp(discounted_return_predicted_log_var)
     )
 
     discounted_return_nll_loss = discounted_return_nll_loss.mean()
@@ -298,23 +298,26 @@ def train_model(
 
         train_loss = 0
 
-        for grid_true, discounted_return_approx in train_data_loader:
+        for grid_true, actual_discounted_return in train_data_loader:
 
             # Move data to the device
             grid_true = grid_true.to(DEVICE)
-            discounted_return_approx = discounted_return_approx.to(DEVICE)
+            actual_discounted_return = actual_discounted_return.to(DEVICE)
 
             optimiser.zero_grad()
 
             batch_size = grid_true.size(0)
 
-            grid_recon_logits, z_mean, z_logvar, d_return_mu, d_return_log_var \
-                = model(grid_true, training=True)
+            grid_recon_logits, z_mean, z_logvar, \
+                predicted_discounted_return_mu, predicted_discounted_return_log_var \
+                    = model(grid_true, training=True)
 
             loss, _, _, _ = vae_loss(
                 grid_true, grid_recon_logits,
                 z_mean, z_logvar,
-                discounted_return_approx, d_return_mu, d_return_log_var,
+                actual_discounted_return,
+                predicted_discounted_return_mu,
+                predicted_discounted_return_log_var,
                 epoch=epoch,
                 max_kld_weight=max_kld_weight,
                 discounted_return_loss_weight=discounted_return_loss_weight
@@ -335,22 +338,25 @@ def train_model(
         validation_kl_div_loss = 0
         validation_dr_loss = 0
 
-        for grid_true, discounted_return_approx in val_data_loader:
+        for grid_true, actual_discounted_return in val_data_loader:
 
             # Move data to the device
             grid_true = grid_true.to(DEVICE)
-            discounted_return_approx = discounted_return_approx.to(DEVICE)
+            actual_discounted_return = actual_discounted_return.to(DEVICE)
 
             batch_size = grid_true.size(0)
 
             with torch.no_grad():
-                grid_recon_logits, z_mean, z_logvar, d_return_mu, d_return_log_var \
-                    = model(grid_true, training=False)
+                grid_recon_logits, z_mean, z_logvar, \
+                    predicted_discounted_return_mu, predicted_discounted_return_log_var \
+                        = model(grid_true, training=False)
 
             loss, pixel_bce, kl_div_loss, discounted_return_nll_loss = vae_loss(
                 grid_true, grid_recon_logits,
                 z_mean, z_logvar,
-                discounted_return_approx, d_return_mu, d_return_log_var,
+                actual_discounted_return,
+                predicted_discounted_return_mu,
+                predicted_discounted_return_log_var,
                 epoch=epoch,
                 max_kld_weight=max_kld_weight,
                 discounted_return_loss_weight=discounted_return_loss_weight
@@ -454,29 +460,32 @@ if __name__ == "__main__":
         batch_size=BATCH_SIZE
     )
 
-    for dr_weight in [2]:
+    FILENAME_PREFIX = os.path.join(OUT_DIR, "1c_512b_100epoch_tdr_drw_2")
 
-        FILENAME_PREFIX = os.path.join(OUT_DIR, f"1c_512b_100epoch_tdr_drw_{dr_weight}")
+    train_model(
+        train_data_loader=train_loader,
+        val_data_loader=validation_loader,
+        filename_prefix=FILENAME_PREFIX,
+        latent_dim=LATENT_DIM,
+        max_kld_weight=MAX_KLD_WEIGHT,
+        discounted_return_loss_weight=2,
+        train_set_discounted_return_mean=train_d_return_mean,
+        train_set_discounted_return_std=train_d_return_std
+    )
 
-        train_model(
-            train_data_loader=train_loader,
-            val_data_loader=validation_loader,
-            filename_prefix=FILENAME_PREFIX,
-            latent_dim=LATENT_DIM,
-            max_kld_weight=MAX_KLD_WEIGHT,
-            discounted_return_loss_weight=dr_weight,
-            train_set_discounted_return_mean=train_d_return_mean,
-            train_set_discounted_return_std=train_d_return_std
-        )
+    utils.plot_dr_history(FILENAME_PREFIX)
 
-        utils.plot_dr_history(FILENAME_PREFIX)
+    utils.mean_vs_true_discounted_return(
+        filepath_prefix=FILENAME_PREFIX,
+        dataset=test_set
+    )
 
-        utils.mean_vs_true_discounted_return(
-            filepath_prefix=FILENAME_PREFIX,
-            dataset=test_set
-        )
+    utils.pred_error_vs_pred_sigma(
+        filepath_prefix=FILENAME_PREFIX,
+        dataset=test_set
+    )
 
-        utils.pred_error_vs_pred_sigma(
-            filepath_prefix=FILENAME_PREFIX,
-            dataset=test_set
-        )
+    utils.reconstruct_highest_lowest_predicted_mu_sigma(
+        filepath_prefix=FILENAME_PREFIX,
+        dataset=test_set
+    )
