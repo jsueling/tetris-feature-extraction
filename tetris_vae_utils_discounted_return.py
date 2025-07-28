@@ -194,3 +194,142 @@ def pred_error_vs_pred_sigma(filepath_prefix, dataset, device=DEVICE):
     plt.savefig(f'{filepath_prefix}_error_vs_predicted_sigma.png')
     # plt.show()
     plt.close()
+
+def reconstruct_highest_lowest_predicted_mu_sigma(filepath_prefix, dataset, device=DEVICE):
+    """
+    Visualises the reconstructions of the highest and lowest
+    discounted return (μ) / standard deviation (σ) predictions of the model.
+    """
+
+    model = TetrisDiscountedReturnVAE(latent_dim=LATENT_DIM).to(device)
+    model, train_d_return_mean, train_d_return_std = \
+        load_model_dr(model, f"{filepath_prefix}_model.pth")
+
+    data_loader = DataLoader(dataset, shuffle=False)
+
+    test_samples = []
+
+    model.eval()
+    with torch.no_grad():
+        for grids, true_norm_return in data_loader:
+
+            grids = grids.to(device)
+            true_norm_return = true_norm_return.to(device)
+
+            grid_recon_logits, _, _, predicted_norm_return_mu, predicted_norm_log_var \
+                  = model(grids, training=False)
+
+            # Unnormalise the predicted rewards (scale + shift)
+            predicted_return_mean = predicted_norm_return_mu.squeeze().cpu() * \
+                train_d_return_std + train_d_return_mean
+            # Unnormalise the predicted standard deviation (scale only)
+            predicted_return_sigma = np.exp(0.5 * predicted_norm_log_var.squeeze().cpu()) * \
+                train_d_return_std
+            true_return = (true_norm_return.squeeze().cpu() * train_d_return_std) + \
+                train_d_return_mean
+
+            test_samples.append((
+                predicted_return_mean,
+                predicted_return_sigma,
+                grid_recon_logits,
+                grids,
+                true_return
+            ))
+
+    # # Sort by predicted mean discounted return (μ)
+    # test_samples.sort(key=lambda x: x[0].item())
+
+    # Sort by predicted standard deviation (σ)
+    test_samples.sort(key=lambda x: x[1].item())
+
+    for i in range(3):
+        highest_sample = test_samples[-((i+1) * 10 + 1)]
+        lowest_sample = test_samples[(i+1) * 10]
+
+        # Highest predicted μ/σ
+        hi_pred_return_mean, hi_pred_return_sigma, \
+            hi_grid_recon_logits, hi_grid, hi_true_return = highest_sample
+
+        plt.figure(figsize=(10, 5))
+
+        # plt.suptitle(
+        #     "Reconstruction of samples with the highest"
+        #     " and lowest \n predicted mean discounted return (μ) "
+        #     "of the model",
+        #     fontsize=14,
+        #     fontweight='bold'
+        # )
+
+        plt.suptitle(
+            "Reconstruction of samples with the highest"
+            " and lowest \n predicted standard deviations (σ) "
+            "of the model",
+            fontsize=14,
+            fontweight='bold'
+        )
+
+        plt.subplot(2, 2, 1)
+        hi_grid_recon = torch.sigmoid(hi_grid_recon_logits).float().squeeze()
+        plt.imshow(hi_grid_recon.detach().cpu().numpy(), cmap='Blues')
+
+        plt.title(
+            f'Predicted std σ: {hi_pred_return_sigma:.2f} \n'
+            f'Prediction error |μ - y|: {abs(hi_pred_return_mean - hi_true_return):.2f}',
+            fontsize=10
+        )
+
+        # plt.title(
+        #     f'Predicted mean discounted return μ: {highest_sample[0]:.2f} \n'
+        #     f'(Predicted std σ: {highest_sample[1]:.2f})',
+        #     fontsize=10
+        # )
+
+        plt.xticks(np.arange(0, 10, 1))
+        plt.yticks(np.arange(0, 20, 1))
+
+        plt.subplot(2, 2, 2)
+        plt.imshow(hi_grid.detach().cpu().numpy().reshape(20, 10), cmap='Blues')
+        plt.title(
+            'Original Grid',
+            fontsize=10
+        )
+        plt.xticks(np.arange(0, 10, 1))
+        plt.yticks(np.arange(0, 20, 1))
+
+        # Lowest predicted μ/σ
+        lo_pred_return_mean, lo_pred_return_sigma, \
+            lo_grid_recon_logits, lo_grid, lo_true_return = lowest_sample
+
+        plt.subplot(2, 2, 3)
+        grid_recon_low = torch.sigmoid(lo_grid_recon_logits).float().squeeze()
+        plt.imshow(grid_recon_low.detach().cpu().numpy(), cmap='Blues')
+
+        plt.title(
+            f'Predicted std σ: {lo_pred_return_sigma:.2f} \n'
+            f'Prediction error |μ - y|: {abs(lo_pred_return_mean - lo_true_return):.2f}',
+            fontsize=10
+        )
+
+        # plt.title(
+        #     f'Predicted mean discounted return μ: {lowest_sample[0]:.2f} \n'
+        #     f'(Predicted std σ: {lowest_sample[1]:.2f})',
+        #     fontsize=10
+        # )
+
+        plt.xticks(np.arange(0, 10, 1))
+        plt.yticks(np.arange(0, 20, 1))
+
+        plt.subplot(2, 2, 4)
+        plt.imshow(lo_grid.detach().cpu().numpy().reshape(20, 10), cmap='Blues')
+        plt.title(
+            'Original Grid',
+            fontsize=10
+        )
+        plt.xticks(np.arange(0, 10, 1))
+        plt.yticks(np.arange(0, 20, 1))
+
+        plt.tight_layout()
+        # plt.savefig(f'{filepath_prefix}_reconstruction_highest_lowest_mu_{i}.png')
+
+    plt.show()
+    plt.close()
