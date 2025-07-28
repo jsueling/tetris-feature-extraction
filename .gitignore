@@ -1,6 +1,7 @@
 test.py
 data/
 out/
+final/
 n_step/
 discounted_return_vae_out/
 __pycache__/

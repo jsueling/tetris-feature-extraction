@@ -20,11 +20,11 @@ DEVICE = torch.device(
 BATCH_SIZE = 512
 LATENT_DIM = 8
 MAX_KLD_WEIGHT = 1.25
-DR_LOSS_WEIGHT = 1.0
+DR_LOSS_WEIGHT = 2.0
 GRID_SIZE = 200
 GRID_HEIGHT = 20
 GRID_WIDTH = 10
-NUM_EPOCHS = 200
+NUM_EPOCHS = 100
 WARMUP_EPOCHS = int(NUM_EPOCHS * 0.3)
 
 class TetrisDiscountedReturnVAE(nn.Module):
@@ -413,12 +413,12 @@ if __name__ == "__main__":
         allow_pickle=True
     )
 
-    # 70 / 20 / 10 split
+    # 60 / 20 / 20 split
     dataset_size = len(raw_data)
     indices = list(range(dataset_size))
     np.random.shuffle(indices)
-    train_split = int(0.7 * dataset_size)
-    val_split = int(0.9 * dataset_size)
+    train_split = int(0.6 * dataset_size)
+    val_split = int(0.8 * dataset_size)
     train_indices = indices[:train_split]
     val_indices = indices[train_split:val_split]
     test_indices = indices[val_split:]
@@ -468,7 +468,7 @@ if __name__ == "__main__":
         filename_prefix=FILENAME_PREFIX,
         latent_dim=LATENT_DIM,
         max_kld_weight=MAX_KLD_WEIGHT,
-        discounted_return_loss_weight=2,
+        discounted_return_loss_weight=DR_LOSS_WEIGHT,
         train_set_discounted_return_mean=train_d_return_mean,
         train_set_discounted_return_std=train_d_return_std
     )
@@ -486,6 +486,11 @@ if __name__ == "__main__":
     )
 
     utils.reconstruct_highest_lowest_predicted_mu_sigma(
+        filepath_prefix=FILENAME_PREFIX,
+        dataset=test_set
+    )
+
+    utils.plot_mu_vs_sigma(
         filepath_prefix=FILENAME_PREFIX,
         dataset=test_set
     )
