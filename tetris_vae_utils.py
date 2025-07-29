@@ -163,14 +163,8 @@ def latent_space_traversal(model, dataset, filename_prefix, latent_dim=LATENT_DI
                 axes[dim_index, sample_index].set_ylabel(
                     f"Latent Dim {dim_index+1}", fontsize=12, rotation=0, labelpad=40, va='center'
                 )
-                axes[dim_index, sample_index].set_xticks([])
-                axes[dim_index, sample_index].set_yticks([])
-                axes[dim_index, sample_index].spines['top'].set_visible(False)
-                axes[dim_index, sample_index].spines['right'].set_visible(False)
-                axes[dim_index, sample_index].spines['bottom'].set_visible(False)
-                axes[dim_index, sample_index].spines['left'].set_visible(False)
-            else:
-                axes[dim_index, sample_index].axis('off')
+            axes[dim_index, sample_index].set_xticks([])
+            axes[dim_index, sample_index].set_yticks([])
 
     # n points on line, n-1 segments between them
     segment_count = num_samples_per_dimension - 1

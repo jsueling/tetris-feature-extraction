@@ -181,7 +181,12 @@ class TetrisDiscountedReturnVAE(nn.Module):
         # Reparameterisation trick
         z = self.reparameterise(z_mean, z_logvar)
 
-        # Predict discounted rewards
+        # Predict discounted return
+
+        # # Stack-height aware modification: so that the reward predictor can
+        # # learn the distribution given the stack height
+        # reward_predictor_input = torch.cat((z, get_stack_height(x)), dim=1)
+
         discounted_rewards = self.reward_predictor(z)
         rewards_mu, rewards_log_var = discounted_rewards[:, 0], discounted_rewards[:, 1]
 
@@ -189,6 +194,19 @@ class TetrisDiscountedReturnVAE(nn.Module):
         grid_recon_logits = self.decode(z)
 
         return grid_recon_logits, z_mean, z_logvar, rewards_mu, rewards_log_var
+
+def get_stack_height(grids: Tensor) -> Tensor:
+    """
+    Returns the highest filled cell in any column of the grid given grids of shape (B, 1, H, W)
+    """
+    grids = grids.squeeze(1)  # B H W
+    # Assigns boolean for each row if any cell is filled in it
+    rows_with_any_filled = grids.any(dim=2) # B H
+    # Argmax finds the first True value going down each row (highest filled cell)
+    highest_stack_depths = \
+        rows_with_any_filled.argmax(dim=1, keepdim=True) # B, 1
+    # Convert to height since rows are indexed moving down the column
+    return GRID_HEIGHT - highest_stack_depths
 
 def kaiming_init(m):
     """
@@ -460,37 +478,39 @@ if __name__ == "__main__":
         batch_size=BATCH_SIZE
     )
 
-    FILENAME_PREFIX = os.path.join(OUT_DIR, "1c_512b_100epoch_tdr_drw_2")
+    for dr_weight in [2]:
 
-    train_model(
-        train_data_loader=train_loader,
-        val_data_loader=validation_loader,
-        filename_prefix=FILENAME_PREFIX,
-        latent_dim=LATENT_DIM,
-        max_kld_weight=MAX_KLD_WEIGHT,
-        discounted_return_loss_weight=DR_LOSS_WEIGHT,
-        train_set_discounted_return_mean=train_d_return_mean,
-        train_set_discounted_return_std=train_d_return_std
-    )
+        FILENAME_PREFIX = os.path.join(OUT_DIR, f"dr_vae_{dr_weight}")
 
-    utils.plot_dr_history(FILENAME_PREFIX)
+        train_model(
+            train_data_loader=train_loader,
+            val_data_loader=validation_loader,
+            filename_prefix=FILENAME_PREFIX,
+            latent_dim=LATENT_DIM,
+            max_kld_weight=MAX_KLD_WEIGHT,
+            discounted_return_loss_weight=dr_weight,
+            train_set_discounted_return_mean=train_d_return_mean,
+            train_set_discounted_return_std=train_d_return_std
+        )
 
-    utils.mean_vs_true_discounted_return(
-        filepath_prefix=FILENAME_PREFIX,
-        dataset=test_set
-    )
+        utils.plot_dr_history(FILENAME_PREFIX)
 
-    utils.pred_error_vs_pred_sigma(
-        filepath_prefix=FILENAME_PREFIX,
-        dataset=test_set
-    )
+        utils.mean_vs_true_discounted_return(
+            filepath_prefix=FILENAME_PREFIX,
+            dataset=test_set
+        )
 
-    utils.reconstruct_highest_lowest_predicted_mu_sigma(
-        filepath_prefix=FILENAME_PREFIX,
-        dataset=test_set
-    )
+        utils.pred_error_vs_pred_sigma(
+            filepath_prefix=FILENAME_PREFIX,
+            dataset=test_set
+        )
 
-    utils.plot_mu_vs_sigma(
-        filepath_prefix=FILENAME_PREFIX,
-        dataset=test_set
-    )
+        utils.plot_mu_vs_sigma(
+            filepath_prefix=FILENAME_PREFIX,
+            dataset=test_set
+        )
+
+        utils.reconstruct_highest_lowest_predicted_mu_sigma(
+            filepath_prefix=FILENAME_PREFIX,
+            dataset=test_set
+        )
