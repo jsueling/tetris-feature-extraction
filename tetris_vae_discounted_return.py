@@ -195,19 +195,6 @@ class TetrisDiscountedReturnVAE(nn.Module):
 
         return grid_recon_logits, z_mean, z_logvar, rewards_mu, rewards_log_var
 
-def get_stack_height(grids: Tensor) -> Tensor:
-    """
-    Returns the highest filled cell in any column of the grid given grids of shape (B, 1, H, W)
-    """
-    grids = grids.squeeze(1)  # B H W
-    # Assigns boolean for each row if any cell is filled in it
-    rows_with_any_filled = grids.any(dim=2) # B H
-    # Argmax finds the first True value going down each row (highest filled cell)
-    highest_stack_depths = \
-        rows_with_any_filled.argmax(dim=1, keepdim=True) # B, 1
-    # Convert to height since rows are indexed moving down the column
-    return GRID_HEIGHT - highest_stack_depths
-
 def kaiming_init(m):
     """
     Kaiming initialisation for the model layers which are followed by LeakyReLU activations.
@@ -275,18 +262,29 @@ def vae_loss(
     return total_loss, pixel_bce, kl_div_loss, discounted_return_nll_loss
 
 def train_model(
-    train_data_loader: DataLoader,
-    val_data_loader: DataLoader,
+    training_dataset: DiscountedReturnDataSet,
+    train_set_discounted_return_mean,
+    train_set_discounted_return_std,
+    validation_dataset: DiscountedReturnDataSet,
     filename_prefix,
     latent_dim=LATENT_DIM,
     max_kld_weight=MAX_KLD_WEIGHT,
-    discounted_return_loss_weight=DR_LOSS_WEIGHT,
-    train_set_discounted_return_mean=None,
-    train_set_discounted_return_std=None
+    discounted_return_loss_weight=DR_LOSS_WEIGHT
 ):
     """
     Trains the Tetris VAE model on the Tetris dataset.
     """
+
+    train_loader = DataLoader(
+        training_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True
+    )
+
+    validation_loader = DataLoader(
+        validation_dataset,
+        batch_size=BATCH_SIZE
+    )
 
     # Initialise model and optimiser
     model = TetrisDiscountedReturnVAE(latent_dim=latent_dim).to(DEVICE)
@@ -296,13 +294,13 @@ def train_model(
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimiser,
         max_lr=1e-3,
-        steps_per_epoch=len(train_data_loader),
+        steps_per_epoch=len(train_loader),
         epochs=NUM_EPOCHS
     )
 
     history = defaultdict(list)
-    validation_samples = len(val_data_loader.dataset)
-    training_samples = len(train_data_loader.dataset)
+    validation_samples = len(validation_dataset)
+    training_samples = len(training_dataset)
 
     # Main loop
     for epoch in tqdm(
@@ -316,7 +314,7 @@ def train_model(
 
         train_loss = 0
 
-        for grid_true, actual_discounted_return in train_data_loader:
+        for grid_true, actual_discounted_return in train_loader:
 
             # Move data to the device
             grid_true = grid_true.to(DEVICE)
@@ -356,7 +354,7 @@ def train_model(
         validation_kl_div_loss = 0
         validation_dr_loss = 0
 
-        for grid_true, actual_discounted_return in val_data_loader:
+        for grid_true, actual_discounted_return in validation_loader:
 
             # Move data to the device
             grid_true = grid_true.to(DEVICE)
@@ -410,7 +408,7 @@ def train_model(
 
         np.save(f"{filename_prefix}_history.npy", history)
 
-        utils.save_model_dr(
+        utils.save_discounted_return_model(
             model,
             train_set_discounted_return_mean,
             train_set_discounted_return_std,
@@ -449,6 +447,8 @@ if __name__ == "__main__":
     train_d_return_mean = train_returns.mean()
     train_d_return_std = train_returns.std()
 
+    # Normalise all datasets using the training set mean and std
+
     train_set = DiscountedReturnDataSet(
         data=[raw_data[i] for i in train_indices],
         d_return_mean=train_d_return_mean,
@@ -467,33 +467,31 @@ if __name__ == "__main__":
         d_return_std=train_d_return_std
     )
 
-    train_loader = DataLoader(
-        train_set,
-        batch_size=BATCH_SIZE,
-        shuffle=True
-    )
-
-    validation_loader = DataLoader(
-        validation_set,
-        batch_size=BATCH_SIZE
-    )
-
     for dr_weight in [2]:
 
         FILENAME_PREFIX = os.path.join(OUT_DIR, f"dr_vae_{dr_weight}")
 
         train_model(
-            train_data_loader=train_loader,
-            val_data_loader=validation_loader,
+            training_dataset=train_set,
+            train_set_discounted_return_mean=train_d_return_mean,
+            train_set_discounted_return_std=train_d_return_std,
+            validation_dataset=validation_set,
             filename_prefix=FILENAME_PREFIX,
             latent_dim=LATENT_DIM,
             max_kld_weight=MAX_KLD_WEIGHT,
             discounted_return_loss_weight=dr_weight,
-            train_set_discounted_return_mean=train_d_return_mean,
-            train_set_discounted_return_std=train_d_return_std
         )
 
         utils.plot_dr_history(FILENAME_PREFIX)
+
+        # After the model is trained, save the height bin statistics
+        # (mean/std of predicted mu/sigma per height bin)
+        utils.save_height_bin_stats(
+            filepath_prefix=FILENAME_PREFIX,
+            dataset=train_set,
+        )
+
+        # Visualise model performance on the test set
 
         utils.mean_vs_true_discounted_return(
             filepath_prefix=FILENAME_PREFIX,
