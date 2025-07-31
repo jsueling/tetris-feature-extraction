@@ -1,4 +1,5 @@
 import os
+import glob
 
 import numpy as np
 import torch
@@ -18,15 +19,11 @@ class TetrisDataset(Dataset):
         os.makedirs(data_dir, exist_ok=True)
         self.device = device
 
-        # Find all .npy files in data_dir
-        file_paths = [
-            os.path.join(data_dir, f)
-            for f in os.listdir(data_dir)
-            if f.endswith('.npy')
-        ]
+        glob_pattern = os.path.join(data_dir, "tetris_state_samples*.npy")
+        file_paths = glob.glob(glob_pattern)
 
         if not file_paths:
-            raise ValueError(f"No .npy files found in {data_dir}")
+            raise ValueError(f"No regular sample files found in {data_dir}")
 
         self.samples = []
         for file_path in file_paths:
@@ -34,6 +31,7 @@ class TetrisDataset(Dataset):
             for sample in data:
                 assert sample.shape == (207,), \
                     f"Expected sample shape (207,), got {sample.shape}"
+                # The samples collected initially included the one-hot encoded piece
                 grid = sample[:200].reshape(1, 20, 10)
                 self.samples.append(grid)
 
@@ -43,3 +41,65 @@ class TetrisDataset(Dataset):
     def __getitem__(self, idx):
         """Load and return a single game state."""
         return torch.Tensor(self.samples[idx]).to(self.device)
+
+class NStepRewardDataSet(Dataset):
+    """Custom dataset for loading Tetris game states with n-step reward samples."""
+
+    def __init__(self, data_dir="./data"):
+
+        os.makedirs(data_dir, exist_ok=True)
+
+        self.samples = np.load(
+            os.path.join(
+                data_dir,
+                "50k_tetris_n_step_samples_125_steps.npy"
+            ),
+            allow_pickle=True
+        )
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        """Load and return a single game state."""
+        return self.samples[idx]['grid'], self.samples[idx]['n_step_rewards']
+
+class DiscountedReturnDataSet(Dataset):
+    """Custom dataset for loading Tetris game states with discounted returns."""
+
+    def __init__(self, data, d_return_mean=None, d_return_std=None):
+        """
+        Normalises the approximate discounted return if mean and std are provided
+        from a prior dataset
+        """
+
+        self.data = data
+        self.d_return_mean = d_return_mean
+        self.d_return_std = d_return_std
+        self.normalise = d_return_mean is not None and d_return_std is not None
+        if self.d_return_std is not None:
+            assert d_return_std > 1e-6, \
+                f"Standard deviation too small for normalisation ({d_return_std})"
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx) -> tuple[torch.Tensor, torch.Tensor]:
+        """Load and return the grid and approximate discounted return of a game state."""
+        sample = self.data[idx]
+
+        grid = sample['grid'].reshape(1, 20, 10)
+        grid_tensor = torch.tensor(grid, dtype=torch.float32)
+
+        approx_discounted_return = sample['approx_discounted_return']
+
+        if self.normalise:
+            approx_discounted_return = \
+                (approx_discounted_return - self.d_return_mean) / self.d_return_std
+
+        approx_discounted_return_tensor = torch.tensor(
+            approx_discounted_return,
+            dtype=torch.float32
+        )
+
+        return grid_tensor, approx_discounted_return_tensor

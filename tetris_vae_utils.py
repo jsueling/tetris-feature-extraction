@@ -1,23 +1,28 @@
-"""A collection of utility functions for training and testing a Variational Autoencoder (VAE) on Tetris states."""
+"""
+A collection of utility functions for training and testing a
+Variational Autoencoder (VAE) on Tetris states.
+"""
 
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
 from torch.utils.data import DataLoader
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device(
+    "cuda" if torch.cuda.is_available() else \
+    ("mps" if torch.backends.mps.is_available() else "cpu")
+)
 LATENT_DIM = 8
-MAX_KLD_WEIGHT = 1.0
 GRID_HEIGHT = 20
 GRID_WIDTH = 10
-BATCH_SIZE = 128
+BATCH_SIZE = 512
 
-def plot_history(history_file_path=None):
+def plot_history(filepath_prefix):
     """
     Plots the training history of the VAE model.
     """
 
-    history_dict = np.load(history_file_path, allow_pickle=True).item()
+    history_dict = np.load(f"{filepath_prefix}_history.npy", allow_pickle=True).item()
 
     plt.figure(figsize=(15, 12))
 
@@ -59,7 +64,7 @@ def plot_history(history_file_path=None):
     plt.grid(True)
 
     plt.tight_layout()
-    plt.savefig('./out/training_history.png')
+    plt.savefig(f'{filepath_prefix}_history.png')
     plt.show()
 
 def reconstruction_test(model, dataset):
@@ -81,11 +86,12 @@ def reconstruction_test(model, dataset):
         reconstructed_sample = (torch.sigmoid(grid_recon_logits) > 0.5).float()
 
         print("True sample:")
-        true_sample = true_sample.int().detach().numpy().reshape(GRID_HEIGHT, GRID_WIDTH)
+        true_sample = true_sample.int().detach().cpu().numpy().reshape(GRID_HEIGHT, GRID_WIDTH)
         print(true_sample)
 
         print("Reconstructed sample:")
-        reconstructed_sample = reconstructed_sample.int().detach().numpy().reshape(GRID_HEIGHT, GRID_WIDTH)
+        reconstructed_sample = \
+            reconstructed_sample.int().detach().cpu().numpy().reshape(GRID_HEIGHT, GRID_WIDTH)
         print(reconstructed_sample)
 
 def latent_space_interpolation_test():
@@ -94,7 +100,7 @@ def latent_space_interpolation_test():
     """
     pass
 
-def latent_space_traversal(model, dataset, latent_dim=LATENT_DIM, max_kld_weight=MAX_KLD_WEIGHT):
+def latent_space_traversal(model, dataset, filename_prefix, latent_dim=LATENT_DIM):
     """
     Tests for disentangled latent representations created by the VAE by
     visually comparing a single sample which is perturbed along each latent dimension.
@@ -130,8 +136,8 @@ def latent_space_traversal(model, dataset, latent_dim=LATENT_DIM, max_kld_weight
             z_modified[:, dim_index] += perturbation_value
             grid_recon_logits = model.decode(z_modified).squeeze(0)
             reconstructed_sample = (torch.sigmoid(grid_recon_logits) > 0.5).float()
-            reconstructed_sample = reconstructed_sample.detach().numpy().reshape(GRID_HEIGHT, GRID_WIDTH)
-            dimension_samples.append(grid_recon_logits.detach().numpy().reshape(GRID_HEIGHT, GRID_WIDTH))
+            reconstructed_sample = reconstructed_sample.detach().cpu().numpy().reshape(GRID_HEIGHT, GRID_WIDTH)
+            dimension_samples.append(grid_recon_logits.detach().cpu().numpy().reshape(GRID_HEIGHT, GRID_WIDTH))
 
         all_dimension_samples.append(dimension_samples)
 
@@ -157,14 +163,8 @@ def latent_space_traversal(model, dataset, latent_dim=LATENT_DIM, max_kld_weight
                 axes[dim_index, sample_index].set_ylabel(
                     f"Latent Dim {dim_index+1}", fontsize=12, rotation=0, labelpad=40, va='center'
                 )
-                axes[dim_index, sample_index].set_xticks([])
-                axes[dim_index, sample_index].set_yticks([])
-                axes[dim_index, sample_index].spines['top'].set_visible(False)
-                axes[dim_index, sample_index].spines['right'].set_visible(False)
-                axes[dim_index, sample_index].spines['bottom'].set_visible(False)
-                axes[dim_index, sample_index].spines['left'].set_visible(False)
-            else:
-                axes[dim_index, sample_index].axis('off')
+            axes[dim_index, sample_index].set_xticks([])
+            axes[dim_index, sample_index].set_yticks([])
 
     # n points on line, n-1 segments between them
     segment_count = num_samples_per_dimension - 1
@@ -188,7 +188,7 @@ def latent_space_traversal(model, dataset, latent_dim=LATENT_DIM, max_kld_weight
     )
     plt.tight_layout()
     plt.subplots_adjust(top=0.85)
-    plt.savefig(f'./out/latent_space_traversal_{latent_dim}d_{max_kld_weight}_max_kld.png')
+    plt.savefig(f'{filename_prefix}_latent_traversal.png')
     plt.show()
 
 def map_latent_space_to_grid(model, dataset, latent_dim=LATENT_DIM):
