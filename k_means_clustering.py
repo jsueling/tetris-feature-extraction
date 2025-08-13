@@ -9,9 +9,9 @@ from sklearn.metrics import silhouette_score
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
-from tetris_vae_convolutional import TetrisConvolutionalVAE
-from tetris_dataset import TetrisDataset
-import tetris_vae_utils as utils
+from tetris_dataset import DiscountedReturnDataSet
+import tetris_vae_utils_discounted_return as utils_dr
+from tetris_vae_discounted_return import TetrisDiscountedReturnVAE
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 LATENT_DIM = 8
@@ -31,7 +31,7 @@ def elbow_plot(data, min_k=2, max_k=40, seed=0):
     plt.title('Elbow plot for K-Means clustering')
     plt.xlabel('Number of clusters')
     plt.ylabel('WCSS (Inertia)')
-    plt.savefig('./out/elbow_plot.png')
+    plt.savefig(DIR + 'elbow_plot.png')
     plt.show()
 
 def avg_silhouette(data, min_k=2, max_k=40, seed=0):
@@ -53,7 +53,7 @@ def avg_silhouette(data, min_k=2, max_k=40, seed=0):
     ax1.set_ylabel('Average silhouette score')
     ax1.set_title('Average silhouette score for K-Means clustering')
     ax1.grid()
-    plt.savefig('./out/avg_silhouette.png')
+    plt.savefig(DIR + 'avg_silhouette.png')
     plt.show()
 
 def gap_statistic(data, min_k=2, max_k=40, num_ref_datasets=10, seed=0):
@@ -102,7 +102,7 @@ def gap_statistic(data, min_k=2, max_k=40, num_ref_datasets=10, seed=0):
     plt.title('Gap Statistic for K-Means Clustering')
     plt.xlabel('Number of clusters (k)')
     plt.ylabel('Gap Statistic')
-    plt.savefig('./out/gap_statistic.png')
+    plt.savefig(DIR + 'gap_statistic.png')
     plt.show()
     return gaps
 
@@ -113,7 +113,7 @@ def visualise_centroids(data, model, k=20, n_samples=8, seed=0):
     centroids = kmeans.cluster_centers_
 
     all_centroid_samples = []
-    noise_scale = 1.0
+    noise_scale = 0.5
 
     for centroid in centroids:
 
@@ -156,14 +156,8 @@ def visualise_centroids(data, model, k=20, n_samples=8, seed=0):
                 axes[centroid_index, sample_index].set_ylabel(
                     f"Cluster {centroid_index+1}", fontsize=12, rotation=0, labelpad=40, va='center'
                 )
-                axes[centroid_index, sample_index].set_xticks([])
-                axes[centroid_index, sample_index].set_yticks([])
-                axes[centroid_index, sample_index].spines['top'].set_visible(False)
-                axes[centroid_index, sample_index].spines['right'].set_visible(False)
-                axes[centroid_index, sample_index].spines['bottom'].set_visible(False)
-                axes[centroid_index, sample_index].spines['left'].set_visible(False)
-            else:
-                axes[centroid_index, sample_index].axis('off')
+            axes[centroid_index, sample_index].set_xticks([])
+            axes[centroid_index, sample_index].set_yticks([])
 
     for sample_index in range(n_samples):
         axes[0, sample_index].set_title(f"Sample {sample_index+1}", fontsize=12, pad=10)
@@ -177,7 +171,7 @@ def visualise_centroids(data, model, k=20, n_samples=8, seed=0):
     )
     plt.tight_layout()
     plt.subplots_adjust(top=0.95)
-    plt.savefig(f'./out/noisy_centroids_clusters_{k}_noise_scale_{noise_scale}.png')
+    plt.savefig(f'{DIR}noisy_centroids_clusters_{k}_noise_scale_{noise_scale}.png')
     plt.show()
 
 if __name__ == "__main__":
@@ -187,20 +181,45 @@ if __name__ == "__main__":
     np.random.seed(RANDOM_SEED)
     random.seed(RANDOM_SEED)
 
-    model_path = "../out/dim_8_max_kld_1.0.pth"
+    DIR = "./discounted_return_vae_out/"
 
-    vae_model = TetrisConvolutionalVAE(latent_dim=LATENT_DIM).to(DEVICE)
-    vae_model = utils.load_model(vae_model, model_path)
-    dataset = TetrisDataset(device=DEVICE)
-    # Sample a subset of the dataset for clustering
-    indices = torch.randperm(len(dataset))[:10000]
-    subset = torch.utils.data.Subset(dataset, indices)
-    dataloader = DataLoader(subset, batch_size=128)
+    model_path = DIR + "dr_vae_2_model.pth"
+
+    raw_data = np.load(
+        "./data/50k_tetris_approx_discounted_return_125_steps_gamma_0.99.npy",
+        allow_pickle=True
+    )
+
+    # 60 / 20 / 20 split
+    dataset_size = len(raw_data)
+    indices = list(range(dataset_size))
+    np.random.shuffle(indices)
+    train_split = int(0.6 * dataset_size)
+    val_split = int(0.8 * dataset_size)
+    train_indices = indices[:train_split]
+    val_indices = indices[train_split:val_split]
+    test_indices = indices[val_split:]
+
+    vae_model = TetrisDiscountedReturnVAE(latent_dim=LATENT_DIM).to(DEVICE)
+    vae_model, _, _ = utils_dr.load_discounted_return_model(vae_model, model_path)
+
+    train_returns = np.array([raw_data[i]['approx_discounted_return'] for i in train_indices])
+
+    train_d_return_mean = train_returns.mean()
+    train_d_return_std = train_returns.std()
+
+    test_set = DiscountedReturnDataSet(
+        data=[raw_data[i] for i in test_indices],
+        d_return_mean=train_d_return_mean,
+        d_return_std=train_d_return_std
+    )
+
+    data_loader = DataLoader(test_set, batch_size=512, shuffle=False)
 
     latent_samples = []
     with torch.no_grad():
-        for sample in dataloader:
-            _, z_mean, _ = vae_model(sample, training=False)
+        for grid_sample, sample_returns in data_loader:
+            _, z_mean, _, _, _ = vae_model(grid_sample, training=False)
             latent_samples.append(z_mean.cpu().numpy())
         latent_samples = np.concatenate(latent_samples, axis=0)
 
@@ -211,6 +230,6 @@ if __name__ == "__main__":
     gap_statistic(latent_samples, min_k=2, max_k=max_k, seed=RANDOM_SEED)
 
     # Informed by clustering methods and visual inspection
-    K_CLUSTERS = 22
+    K_CLUSTERS = 11
 
     visualise_centroids(latent_samples, vae_model, k=K_CLUSTERS, seed=RANDOM_SEED)

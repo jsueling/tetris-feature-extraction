@@ -109,7 +109,7 @@ def latent_space_traversal(model, dataset, filename_prefix, latent_dim=LATENT_DI
     data_loader = DataLoader(dataset, shuffle=True)
     data_iterator = iter(data_loader)
 
-    sample = next(data_iterator) # 200 dimensional Tetris state
+    grid_sample, _ = next(data_iterator)
 
     # "3 standard deviations around the unit gaussian prior
     # while keeping the remaining latent units fixed"
@@ -120,7 +120,7 @@ def latent_space_traversal(model, dataset, filename_prefix, latent_dim=LATENT_DI
     all_dimension_samples = []
 
     with torch.no_grad():
-        _, z_mean, _ = model(sample, training=False)
+        _, z_mean, _, _, _ = model(grid_sample, training=False)
 
     for dim_index in range(latent_dim):
 
@@ -184,7 +184,8 @@ def latent_space_traversal(model, dataset, filename_prefix, latent_dim=LATENT_DI
         f"latent state representation as one dimension is manually set to ±{perturbation_range} \n"
         f"standard deviations (unit standard normal) while all other \n"
         f"dimensions are held fixed.",
-        fontsize=12
+        fontsize=12,
+        fontweight='bold'
     )
     plt.tight_layout()
     plt.subplots_adjust(top=0.85)

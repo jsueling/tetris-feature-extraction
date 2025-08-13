@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from tetris_dataset import DiscountedReturnDataSet
 import tetris_vae_utils_discounted_return as utils
+from tetris_vae_utils import latent_space_traversal
 
 DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else \
@@ -480,6 +481,18 @@ if __name__ == "__main__":
             latent_dim=LATENT_DIM,
             max_kld_weight=MAX_KLD_WEIGHT,
             discounted_return_loss_weight=dr_weight,
+        )
+
+        model, _, _ = utils.load_discounted_return_model(
+            TetrisDiscountedReturnVAE(),
+            f"{FILENAME_PREFIX}_model.pth"
+        )
+
+        latent_space_traversal(
+            model,
+            dataset=test_set,
+            filename_prefix=FILENAME_PREFIX,
+            latent_dim=LATENT_DIM
         )
 
         utils.plot_dr_history(FILENAME_PREFIX)

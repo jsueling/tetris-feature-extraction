@@ -8,9 +8,9 @@ from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
 from torch.utils.data import DataLoader
 
-from tetris_vae_convolutional import TetrisConvolutionalVAE
-from tetris_dataset import TetrisDataset
-import tetris_vae_utils as utils
+from tetris_dataset import DiscountedReturnDataSet
+import tetris_vae_utils_discounted_return as utils_dr
+from tetris_vae_discounted_return import TetrisDiscountedReturnVAE
 
 LATENT_DIM = 8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -35,12 +35,15 @@ def plot_tsne(
     # https://distill.pub/2016/misread-tsne/
     perplexities = [5, 30, 50]
 
-    nipy_spectral = plt.get_cmap("nipy_spectral")
+    distinct_colors = [
+        "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4",
+        "#46f0f0", "#f032e6", "#bcf60c", "#fabebe", "#008080", "#e6beff"
+    ]
 
     unique_labels = np.unique(labels)
     n_labels = len(unique_labels)
     label_to_colour = {
-        label: nipy_spectral(i / n_labels)
+        label: distinct_colors[i % len(distinct_colors)]
         for i, label in enumerate(unique_labels)
     }
 
@@ -71,16 +74,18 @@ def plot_tsne(
         plt.legend(
             handles=[
                 plt.Line2D([0], [0], marker='o', color='w', label=f'Cluster {label_index + 1}',
-                           markerfacecolor=label_to_colour[label_index], markersize=10)
+                           markerfacecolor=label_to_colour[label_index], markersize=14)
                 for label_index in range(n_labels)
             ],
             loc='upper right',
-            bbox_to_anchor=(1.2, 1),
+            bbox_to_anchor=(1.23, 1),
+            fontsize=13,
+            title_fontsize=13,
             title='Cluster groups'
         )
         plt.tight_layout()
         plt.subplots_adjust(right=0.825)
-        plt.savefig(f'./out/t_sne_perplexity_{perplexity}_clusters_{n_labels}.png')
+        plt.savefig(f'{DIR}t_sne_perplexity_{perplexity}_clusters_{n_labels}.png')
         plt.show()
         plt.close(fig)
 
@@ -91,26 +96,50 @@ if __name__ == "__main__":
     np.random.seed(RANDOM_SEED)
     random.seed(RANDOM_SEED)
 
-    model_path = "../out/dim_8_max_kld_1.0.pth"
+    DIR = "./discounted_return_vae_out/"
 
-    # Load the data
-    vae_model = TetrisConvolutionalVAE(latent_dim=LATENT_DIM).to(DEVICE)
-    vae_model = utils.load_model(vae_model, model_path)
-    dataset = TetrisDataset(device=DEVICE)
-    # Sample a subset of the dataset for visualisation
-    indices = torch.randperm(len(dataset))[:10000]
-    subset = torch.utils.data.Subset(dataset, indices)
-    dataloader = DataLoader(subset, batch_size=128)
+    model_path = DIR + "dr_vae_2_model.pth"
+
+    raw_data = np.load(
+        "./data/50k_tetris_approx_discounted_return_125_steps_gamma_0.99.npy",
+        allow_pickle=True
+    )
+
+    # 60 / 20 / 20 split
+    dataset_size = len(raw_data)
+    indices = list(range(dataset_size))
+    np.random.shuffle(indices)
+    train_split = int(0.6 * dataset_size)
+    val_split = int(0.8 * dataset_size)
+    train_indices = indices[:train_split]
+    val_indices = indices[train_split:val_split]
+    test_indices = indices[val_split:]
+
+    vae_model = TetrisDiscountedReturnVAE(latent_dim=LATENT_DIM).to(DEVICE)
+    vae_model, _, _ = utils_dr.load_discounted_return_model(vae_model, model_path)
+
+    train_returns = np.array([raw_data[i]['approx_discounted_return'] for i in train_indices])
+
+    train_d_return_mean = train_returns.mean()
+    train_d_return_std = train_returns.std()
+
+    test_set = DiscountedReturnDataSet(
+        data=[raw_data[i] for i in test_indices],
+        d_return_mean=train_d_return_mean,
+        d_return_std=train_d_return_std
+    )
+
+    data_loader = DataLoader(test_set, batch_size=512, shuffle=False)
 
     latent_samples = []
     with torch.no_grad():
-        for sample in dataloader:
-            _, z_mean, _ = vae_model(sample, training=False)
+        for grid_sample, sample_returns in data_loader:
+            _, z_mean, _, _, _ = vae_model(grid_sample, training=False)
             latent_samples.append(z_mean.cpu().numpy())
         latent_samples = np.concatenate(latent_samples, axis=0)
 
     # Informed by clustering methods and visual inspection
-    K_CLUSTERS = 22
+    K_CLUSTERS = 11
 
     clusterer = KMeans(n_clusters=K_CLUSTERS, random_state=RANDOM_SEED)
     cluster_labels = clusterer.fit_predict(latent_samples)
